@@ -1,0 +1,9 @@
+[package]
+name = "slip"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+[dev-dependencies]
+hexlit = "0.5.3"
