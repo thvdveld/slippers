@@ -1,22 +1,65 @@
 //! Implementation of the Serial Line IP (SLIP) protocol from [RFC 1055].
 //!
+//! # Example
+//!
+//! The following example contains an ecoded message, that contains two frames (non IP frames, just
+//! arbitrrary data).
+//! The example shows how these two frames can be decoded.
+//!
+//! ```rust
+//! # use hexlit::hex;
+//! # use slip::{SlipDecoder, SlipError};
+//! # fn main() -> Result<(), SlipError> {
+//! let encoded = hex!("012345C06789ABC0");
+//! let encoded = SlipDecoder::new(&encoded[..]);
+//! let mut buffer = [0u8; 128];
+//!
+//! // Decoding the first frame.
+//! let mut len = 0;
+//! for (d, b) in encoded.iter().zip(buffer.iter_mut()) {
+//!     *b = *d;
+//!     len += 1;
+//! }
+//!
+//! let result = &buffer[..len];
+//! assert_eq!(result, hex!("012345"));
+//!
+//! let encoded = encoded.next_frame()?;
+//!
+//! // Decoding the second frame.
+//! let mut len= 0;
+//! for (d, b) in encoded.iter().zip(buffer.iter_mut()) {
+//!     *b = *d;
+//!     len += 1;
+//! }
+//!
+//! let result = &buffer[..len];
+//! assert_eq!(result, hex!("6789AB"));
+//!
+//! assert_eq!(encoded.next_frame(), Err(SlipError::ReachedEnd));
+//!
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! [RFC 1055]: https://datatracker.ietf.org/doc/html/rfc1055
 
 #![no_std]
 
+/// A SLIP decoder.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Slip<'a> {
+pub struct SlipDecoder<'a> {
     buffer: &'a [u8],
 }
 
-impl<'a> Slip<'a> {
+impl<'a> SlipDecoder<'a> {
     pub fn new(buffer: &'a [u8]) -> Self {
         Self { buffer }
     }
 
-    pub fn next_frame(mut self) -> Option<Result<Slip<'a>, SlipError>> {
+    pub fn next_frame(mut self) -> Result<SlipDecoder<'a>, SlipError> {
         if self.buffer.is_empty() {
-            return None;
+            return Err(SlipError::ReachedEnd);
         } else {
             let mut slip_state = SlipState::None;
             while !self.buffer.is_empty() {
@@ -31,7 +74,7 @@ impl<'a> Slip<'a> {
                             self.buffer = &self.buffer[1..];
                             slip_state = SlipState::None;
                         }
-                        _ => return Some(Err(SlipError::UnexpectedAfterEscaped)),
+                        _ => return Err(SlipError::UnexpectedAfterEscaped),
                     },
                     SlipState::None => match c {
                         slip_values::ESC => {
@@ -48,13 +91,11 @@ impl<'a> Slip<'a> {
             }
         }
 
-        #[allow(clippy::if_same_then_else)]
-        if self.buffer.is_empty() {
-            None
-        } else if self.buffer.len() == 1 && self.buffer[0] == slip_values::END {
-            None
+        if self.buffer.is_empty() || (self.buffer.len() == 1 && self.buffer[0] == slip_values::END)
+        {
+            Err(SlipError::ReachedEnd)
         } else {
-            Some(Ok(Slip::new(self.buffer)))
+            Ok(SlipDecoder::new(self.buffer))
         }
     }
 
@@ -214,13 +255,13 @@ mod tests {
     #[test]
     fn decode_empty_iter() {
         let data = [];
-        let slip = Slip::new(&data[..]);
+        let slip = SlipDecoder::new(&data[..]);
 
         let mut slip_iter = slip.iter();
         assert_eq!(slip_iter.next(), None);
 
         // Make sure that there is no next frame in the buffer.
-        assert_eq!(slip.next_frame(), None);
+        assert_eq!(slip.next_frame(), Err(SlipError::ReachedEnd));
     }
 
     #[test]
@@ -237,12 +278,12 @@ mod tests {
         let data = hex!("00112233445566C0");
         let result = hex!("00112233445566");
 
-        let slip = Slip::new(&data[..]);
+        let slip = SlipDecoder::new(&data[..]);
         for (b, exp) in slip.iter().zip(result.iter()) {
             assert_eq!(b, exp);
         }
 
-        assert!(slip.next_frame().is_none());
+        assert_eq!(slip.next_frame(), Err(SlipError::ReachedEnd));
     }
 
     #[test]
@@ -260,20 +301,18 @@ mod tests {
         let first_result = hex!("012345");
         let second_result = hex!("6789AB");
 
-        let slip = Slip::new(&data[..]);
+        let slip = SlipDecoder::new(&data[..]);
         for (b, exp) in slip.iter().zip(first_result.iter()) {
             assert_eq!(b, exp);
         }
 
-        let slip = slip.next_frame();
-        assert!(slip.is_some());
-        let slip = slip.unwrap().unwrap();
+        let slip = slip.next_frame().unwrap();
 
         for (b, exp) in slip.iter().zip(second_result.iter()) {
             assert_eq!(b, exp);
         }
 
-        assert!(slip.next_frame().is_none());
+        assert_eq!(slip.next_frame(), Err(SlipError::ReachedEnd));
     }
 
     #[test]
@@ -294,12 +333,12 @@ mod tests {
         let data = hex!("00DBDCFFC0");
         let result = hex!("00C0FF");
 
-        let slip = Slip::new(&data[..]);
+        let slip = SlipDecoder::new(&data[..]);
         for (b, exp) in slip.iter().zip(result.iter()) {
             assert_eq!(b, exp, "{b:0x} {exp:0x}");
         }
 
-        assert!(slip.next_frame().is_none());
+        assert_eq!(slip.next_frame(), Err(SlipError::ReachedEnd));
     }
 
     #[test]
@@ -316,12 +355,12 @@ mod tests {
         let data = hex!("AADBDD55C0");
         let result = hex!("AADB55");
 
-        let slip = Slip::new(&data[..]);
+        let slip = SlipDecoder::new(&data[..]);
         for (b, exp) in slip.iter().zip(result.iter()) {
             assert_eq!(b, exp);
         }
 
-        assert!(slip.next_frame().is_none());
+        assert_eq!(slip.next_frame(), Err(SlipError::ReachedEnd));
     }
 
     #[test]
@@ -338,15 +377,12 @@ mod tests {
         let data = hex!("00DBAA11C0");
         let result = hex!("00");
 
-        let slip = Slip::new(&data[..]);
+        let slip = SlipDecoder::new(&data[..]);
         for (b, exp) in slip.iter().zip(result.iter()) {
             assert_eq!(b, exp);
         }
 
-        assert_eq!(
-            slip.next_frame(),
-            Some(Err(SlipError::UnexpectedAfterEscaped))
-        );
+        assert_eq!(slip.next_frame(), Err(SlipError::UnexpectedAfterEscaped));
     }
 
     #[test]
