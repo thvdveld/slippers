@@ -1,4 +1,4 @@
-//! Implementation of the Serial Line IP (SLIP) protocol from [RFC 1055].
+//! Implementation of the Serial Line IP (SLIP) protocol from [RFC 1055] for `no_std`.
 //!
 //! # Example
 //!
@@ -17,7 +17,7 @@
 //! // Decoding the first frame.
 //! let mut len = 0;
 //! for (d, b) in encoded.iter().zip(buffer.iter_mut()) {
-//!     *b = *d;
+//!     *b = d;
 //!     len += 1;
 //! }
 //!
@@ -29,7 +29,7 @@
 //! // Decoding the second frame.
 //! let mut len= 0;
 //! for (d, b) in encoded.iter().zip(buffer.iter_mut()) {
-//!     *b = *d;
+//!     *b = d;
 //!     len += 1;
 //! }
 //!
@@ -47,16 +47,35 @@
 #![no_std]
 
 /// A SLIP decoder.
+///
+/// # Example
+///
+/// ```rust
+/// # use hexlit::hex;
+/// # use slip::SlipDecoder;
+/// # use slip::SlipError;
+/// let data = hex!("AADBDD55C0");
+/// let result = hex!("AADB55");
+///
+/// let slip = SlipDecoder::new(&data);
+/// for (b, exp) in slip.iter().zip(result.iter()) {
+///     assert_eq!(b, *exp);
+/// }
+///
+/// assert_eq!(slip.next_frame(), Err(SlipError::ReachedEnd));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SlipDecoder<'a> {
     buffer: &'a [u8],
 }
 
 impl<'a> SlipDecoder<'a> {
+    /// Create a new SLIP decoder by passing a slice with the encoded values to it.
     pub fn new(buffer: &'a [u8]) -> Self {
         Self { buffer }
     }
 
+    /// Return a new SLIP decoder for the next frame in the encoded buffer.
     pub fn next_frame(mut self) -> Result<SlipDecoder<'a>, SlipError> {
         if self.buffer.is_empty() {
             return Err(SlipError::ReachedEnd);
@@ -65,17 +84,6 @@ impl<'a> SlipDecoder<'a> {
             while !self.buffer.is_empty() {
                 let c = self.buffer[0];
                 match slip_state {
-                    SlipState::Escaped => match c {
-                        slip_values::ESC_END => {
-                            self.buffer = &self.buffer[1..];
-                            slip_state = SlipState::None;
-                        }
-                        slip_values::ESC_ESC => {
-                            self.buffer = &self.buffer[1..];
-                            slip_state = SlipState::None;
-                        }
-                        _ => return Err(SlipError::UnexpectedAfterEscaped),
-                    },
                     SlipState::None => match c {
                         slip_values::ESC => {
                             self.buffer = &self.buffer[1..];
@@ -86,6 +94,17 @@ impl<'a> SlipDecoder<'a> {
                             break;
                         }
                         _ => self.buffer = &self.buffer[1..],
+                    },
+                    SlipState::Escaped => match c {
+                        slip_values::ESC_END => {
+                            self.buffer = &self.buffer[1..];
+                            slip_state = SlipState::None;
+                        }
+                        slip_values::ESC_ESC => {
+                            self.buffer = &self.buffer[1..];
+                            slip_state = SlipState::None;
+                        }
+                        _ => return Err(SlipError::UnexpectedAfterEscaped),
                     },
                 }
             }
@@ -99,42 +118,28 @@ impl<'a> SlipDecoder<'a> {
         }
     }
 
-    pub fn iter(&self) -> SlipIterator {
-        SlipIterator::from(self.buffer)
+    /// Return an iterator returning the decoded values until the END byte is reached.
+    pub fn iter(&self) -> SlipDecoderIterator {
+        SlipDecoderIterator::from(self.buffer)
     }
 }
 
 /// An iterator over a buffer that emits the decoded package.
 #[derive(Debug, Copy, Clone)]
-pub struct SlipIterator<'a> {
+pub struct SlipDecoderIterator<'a> {
     buffer: &'a [u8],
     state: SlipState,
-    done: bool,
 }
 
-impl<'a> Iterator for SlipIterator<'a> {
-    type Item = &'a u8;
+impl<'a> Iterator for SlipDecoderIterator<'a> {
+    type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.buffer.is_empty() {
-            self.done = true;
             None
         } else {
             let c = self.buffer[0];
             match self.state {
-                SlipState::Escaped => match c {
-                    slip_values::ESC_END => {
-                        self.buffer = &self.buffer[1..];
-                        self.state = SlipState::None;
-                        Some(&slip_values::END)
-                    }
-                    slip_values::ESC_ESC => {
-                        self.buffer = &self.buffer[1..];
-                        self.state = SlipState::None;
-                        Some(&slip_values::ESC)
-                    }
-                    _ => None,
-                },
                 SlipState::None => match c {
                     slip_values::ESC => {
                         self.buffer = &self.buffer[1..];
@@ -142,30 +147,61 @@ impl<'a> Iterator for SlipIterator<'a> {
                         self.next()
                     }
                     slip_values::END => {
-                        if self.buffer.len() == 1 {
-                            self.done = true;
-                        }
+                        if self.buffer.len() == 1 {}
                         None
                     }
                     _ => {
-                        let c = &self.buffer[0];
+                        let c = self.buffer[0];
                         self.buffer = &self.buffer[1..];
                         Some(c)
                     }
+                },
+                SlipState::Escaped => match c {
+                    slip_values::ESC_END => {
+                        self.buffer = &self.buffer[1..];
+                        self.state = SlipState::None;
+                        Some(slip_values::END)
+                    }
+                    slip_values::ESC_ESC => {
+                        self.buffer = &self.buffer[1..];
+                        self.state = SlipState::None;
+                        Some(slip_values::ESC)
+                    }
+                    _ => None,
                 },
             }
         }
     }
 }
 
-impl<'a> From<&'a [u8]> for SlipIterator<'a> {
+impl<'a> From<&'a [u8]> for SlipDecoderIterator<'a> {
     fn from(val: &'a [u8]) -> Self {
-        SlipIterator {
+        SlipDecoderIterator {
             buffer: val,
             state: SlipState::None,
-            done: false,
         }
     }
+}
+
+/// Checks if the encoded package contains errors.
+/// _Note_: it only checks until the end of the first encoded frame.
+pub fn check_for_errors(buffer: &[u8]) -> Result<(), SlipError> {
+    let mut state = SlipState::None;
+    for b in buffer {
+        match state {
+            SlipState::None => match *b {
+                slip_values::ESC => state = SlipState::Escaped,
+                slip_values::END => break,
+                _ => (),
+            },
+            SlipState::Escaped => match *b {
+                slip_values::ESC_END | slip_values::ESC_ESC => state = SlipState::None,
+                _ => return Err(SlipError::UnexpectedAfterEscaped),
+            },
+        }
+    }
+
+    Ok(())
 }
 
 /// Decode SLIP in place.
@@ -175,6 +211,7 @@ impl<'a> From<&'a [u8]> for SlipIterator<'a> {
 pub fn decode_in_place(
     buffer: &mut [u8],
 ) -> Result<(&[u8], Option<core::ops::RangeFrom<usize>>), SlipError> {
+    // TODO(thvdveld): use the SLIP decoder struct instead of re-implementing the decoding here.
     if buffer.is_empty() {
         return Ok((&[], None));
     }
@@ -255,7 +292,7 @@ mod tests {
     #[test]
     fn decode_empty_iter() {
         let data = [];
-        let slip = SlipDecoder::new(&data[..]);
+        let slip = SlipDecoder::new(&data);
 
         let mut slip_iter = slip.iter();
         assert_eq!(slip_iter.next(), None);
@@ -278,9 +315,9 @@ mod tests {
         let data = hex!("00112233445566C0");
         let result = hex!("00112233445566");
 
-        let slip = SlipDecoder::new(&data[..]);
+        let slip = SlipDecoder::new(&data);
         for (b, exp) in slip.iter().zip(result.iter()) {
-            assert_eq!(b, exp);
+            assert_eq!(b, *exp);
         }
 
         assert_eq!(slip.next_frame(), Err(SlipError::ReachedEnd));
@@ -289,6 +326,7 @@ mod tests {
     #[test]
     fn decode_one_packet() {
         let mut data = hex!("00112233445566C0");
+        check_for_errors(&data).unwrap();
 
         let (decoded, rest) = decode_in_place(&mut data[..]).unwrap();
         assert_eq!(decoded, hex!("00112233445566"));
@@ -301,15 +339,15 @@ mod tests {
         let first_result = hex!("012345");
         let second_result = hex!("6789AB");
 
-        let slip = SlipDecoder::new(&data[..]);
+        let slip = SlipDecoder::new(&data);
         for (b, exp) in slip.iter().zip(first_result.iter()) {
-            assert_eq!(b, exp);
+            assert_eq!(b, *exp);
         }
 
         let slip = slip.next_frame().unwrap();
 
         for (b, exp) in slip.iter().zip(second_result.iter()) {
-            assert_eq!(b, exp);
+            assert_eq!(b, *exp);
         }
 
         assert_eq!(slip.next_frame(), Err(SlipError::ReachedEnd));
@@ -318,6 +356,7 @@ mod tests {
     #[test]
     fn decode_two_packets() {
         let mut data = hex!("012345C06789ABC0");
+        check_for_errors(&data).unwrap();
 
         let (decoded, rest) = decode_in_place(&mut data[..]).unwrap();
         assert_eq!(decoded, hex!("012345"));
@@ -333,9 +372,9 @@ mod tests {
         let data = hex!("00DBDCFFC0");
         let result = hex!("00C0FF");
 
-        let slip = SlipDecoder::new(&data[..]);
+        let slip = SlipDecoder::new(&data);
         for (b, exp) in slip.iter().zip(result.iter()) {
-            assert_eq!(b, exp, "{b:0x} {exp:0x}");
+            assert_eq!(b, *exp);
         }
 
         assert_eq!(slip.next_frame(), Err(SlipError::ReachedEnd));
@@ -344,6 +383,7 @@ mod tests {
     #[test]
     fn decode_with_escaped_end() {
         let mut data = hex!("00DBDCFFC0");
+        check_for_errors(&data).unwrap();
 
         let (decoded, rest) = decode_in_place(&mut data[..]).unwrap();
         assert_eq!(decoded, hex!("00C0FF"));
@@ -355,9 +395,9 @@ mod tests {
         let data = hex!("AADBDD55C0");
         let result = hex!("AADB55");
 
-        let slip = SlipDecoder::new(&data[..]);
+        let slip = SlipDecoder::new(&data);
         for (b, exp) in slip.iter().zip(result.iter()) {
-            assert_eq!(b, exp);
+            assert_eq!(b, *exp);
         }
 
         assert_eq!(slip.next_frame(), Err(SlipError::ReachedEnd));
@@ -366,6 +406,7 @@ mod tests {
     #[test]
     fn decode_with_escaped_esc() {
         let mut data = hex!("AADBDD55C0");
+        check_for_errors(&data).unwrap();
 
         let (decoded, rest) = decode_in_place(&mut data[..]).unwrap();
         assert_eq!(decoded, hex!("AADB55"));
@@ -377,9 +418,9 @@ mod tests {
         let data = hex!("00DBAA11C0");
         let result = hex!("00");
 
-        let slip = SlipDecoder::new(&data[..]);
+        let slip = SlipDecoder::new(&data);
         for (b, exp) in slip.iter().zip(result.iter()) {
-            assert_eq!(b, exp);
+            assert_eq!(b, *exp);
         }
 
         assert_eq!(slip.next_frame(), Err(SlipError::UnexpectedAfterEscaped));
@@ -388,6 +429,7 @@ mod tests {
     #[test]
     fn decode_with_escape_error() {
         let mut data = hex!("00DBAA11C0");
+        assert_eq!(check_for_errors(&data), Err(SlipError::UnexpectedAfterEscaped));
 
         assert_eq!(
             decode_in_place(&mut data[..]),
