@@ -1,7 +1,7 @@
 [package]
 name = "slippers"
 authors = ["Thibaut Vandervelden <thvdveld@vub.be>"]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "Implementation of the SLIP RFC for `no_std`."
 repository = "https://github.com/thvdveld/slippers"
