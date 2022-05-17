@@ -41,7 +41,7 @@
 //!
 //! ```rust
 //! # use hexlit::hex;
-//! # use slippers::SlipEncoder;
+//! # use slippers::{SlipEncoder, SlipError};
 //! # fn main() -> Result<(), SlipError> {
 //! let data = hex!("00112233445566");
 //! let expected = hex!("00112233445566C0");
@@ -55,6 +55,7 @@
 //! }
 //!
 //! assert_eq!(&buffer[..len + 1], &expected);
+//! # Ok(())
 //! # }
 //! ```
 //!
@@ -95,34 +96,30 @@ impl<'a> SlipDecoder<'a> {
     pub fn next_frame(mut self) -> Result<SlipDecoder<'a>, SlipError> {
         if self.buffer.is_empty() {
             return Err(SlipError::ReachedEnd);
-        } else {
-            let mut slip_state = SlipState::None;
-            while !self.buffer.is_empty() {
-                let c = self.buffer[0];
-                match slip_state {
-                    SlipState::None => match c {
-                        slip_values::ESC => {
-                            self.buffer = &self.buffer[1..];
-                            slip_state = SlipState::Escaped;
-                        }
-                        slip_values::END => {
-                            self.buffer = &self.buffer[1..];
-                            break;
-                        }
-                        _ => self.buffer = &self.buffer[1..],
-                    },
-                    SlipState::Escaped => match c {
-                        slip_values::ESC_END => {
-                            self.buffer = &self.buffer[1..];
-                            slip_state = SlipState::None;
-                        }
-                        slip_values::ESC_ESC => {
-                            self.buffer = &self.buffer[1..];
-                            slip_state = SlipState::None;
-                        }
-                        _ => return Err(SlipError::UnexpectedAfterEscaped),
-                    },
-                }
+        }
+
+        let mut slip_state = SlipState::None;
+        while !self.buffer.is_empty() {
+            let c = self.buffer[0];
+            match slip_state {
+                SlipState::None => match c {
+                    slip_values::ESC => {
+                        self.buffer = &self.buffer[1..];
+                        slip_state = SlipState::Escaped;
+                    }
+                    slip_values::END => {
+                        self.buffer = &self.buffer[1..];
+                        break;
+                    }
+                    _ => self.buffer = &self.buffer[1..],
+                },
+                SlipState::Escaped => match c {
+                    slip_values::ESC_END | slip_values::ESC_ESC => {
+                        self.buffer = &self.buffer[1..];
+                        slip_state = SlipState::None;
+                    }
+                    _ => return Err(SlipError::UnexpectedAfterEscaped),
+                },
             }
         }
 
@@ -287,7 +284,7 @@ pub fn decode_in_place(
 ///
 /// ```rust
 /// # use hexlit::hex;
-/// # use slippers::SlipEncoder;
+/// # use slippers::{SlipEncoder, SlipError};
 /// # fn main() -> Result<(), SlipError> {
 /// let data = hex!("00112233445566");
 /// let expected = hex!("00112233445566C0");
@@ -301,6 +298,7 @@ pub fn decode_in_place(
 /// }
 ///
 /// assert_eq!(&buffer[..len + 1], &expected);
+/// # Ok(())
 /// # }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SlipEncoder<'a> {
