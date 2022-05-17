@@ -38,3 +38,5 @@ assert_eq!(encoded.next_frame(), Err(SlipError::ReachedEnd));
 ```
 
 [RFC 1055]: https://datatracker.ietf.org/doc/html/rfc1055
+
+License: MIT OR Apache-2.0
