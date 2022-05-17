@@ -35,9 +35,7 @@
 //!
 //! let result = &buffer[..len];
 //! assert_eq!(result, hex!("6789AB"));
-//!
 //! assert_eq!(encoded.next_frame(), Err(SlipError::ReachedEnd));
-//!
 //! # Ok(())
 //! # }
 //! ```
