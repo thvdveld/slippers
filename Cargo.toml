@@ -3,6 +3,7 @@ name = "slip"
 authors = ["Thibaut Vandervelden <thvdveld@vub.be>"]
 version = "0.1.0"
 edition = "2021"
+description = "Implementation of the SLIP RFC for `no_std`."
 repository = "https://github.com/thvdveld/slip-rs"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
