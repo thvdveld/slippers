@@ -1,5 +1,6 @@
 [package]
 name = "slip"
+authors = ["Thibaut Vandervelden <thvdveld@vub.be>"]
 version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/thvdveld/slip-rs"
