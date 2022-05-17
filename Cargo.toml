@@ -5,6 +5,7 @@ edition = "2021"
 repository = "https://github.com/thvdveld/slip-rs"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
+keywords = ["no_std", "slip"]
 
 [dependencies]
 
