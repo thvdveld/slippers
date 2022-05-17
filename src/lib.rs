@@ -2,13 +2,11 @@
 //!
 //! # Example
 //!
-//! The following example contains an ecoded message, that contains two frames (non IP frames, just
-//! arbitrrary data).
-//! The example shows how these two frames can be decoded.
+//! ## Decoding SLIP
 //!
 //! ```rust
 //! # use hexlit::hex;
-//! # use slip::{SlipDecoder, SlipError};
+//! # use slippers::{SlipDecoder, SlipError};
 //! # fn main() -> Result<(), SlipError> {
 //! let encoded = hex!("012345C06789ABC0");
 //! let encoded = SlipDecoder::new(&encoded[..]);
@@ -39,6 +37,26 @@
 //! # Ok(())
 //! # }
 //! ```
+//! # Encoding SLIP
+//!
+//! ```rust
+//! # use hexlit::hex;
+//! # use slippers::SlipEncoder;
+//! # fn main() -> Result<(), SlipError> {
+//! let data = hex!("00112233445566");
+//! let expected = hex!("00112233445566C0");
+//! let slip = SlipEncoder::new(&data);
+//! let mut buffer = [0u8; 128];
+//!
+//! let mut len = 0;
+//! for (i, (v, b)) in slip.iter().zip(buffer.iter_mut()).enumerate() {
+//!     *b = v;
+//!     len = i;
+//! }
+//!
+//! assert_eq!(&buffer[..len + 1], &expected);
+//! # }
+//! ```
 //!
 //! [RFC 1055]: https://datatracker.ietf.org/doc/html/rfc1055
 
@@ -50,8 +68,8 @@
 ///
 /// ```rust
 /// # use hexlit::hex;
-/// # use slip::SlipDecoder;
-/// # use slip::SlipError;
+/// # use slippers::SlipDecoder;
+/// # use slippers::SlipError;
 /// let data = hex!("AADBDD55C0");
 /// let result = hex!("AADB55");
 ///
@@ -263,6 +281,101 @@ pub fn decode_in_place(
     Err(SlipError::ReachedEnd)
 }
 
+/// A SLIP encoder.
+///
+/// # Example
+///
+/// ```rust
+/// # use hexlit::hex;
+/// # use slippers::SlipEncoder;
+/// # fn main() -> Result<(), SlipError> {
+/// let data = hex!("00112233445566");
+/// let expected = hex!("00112233445566C0");
+/// let slip = SlipEncoder::new(&data);
+/// let mut buffer = [0u8; 128];
+///
+/// let mut len = 0;
+/// for (i, (v, b)) in slip.iter().zip(buffer.iter_mut()).enumerate() {
+///     *b = v;
+///     len = i;
+/// }
+///
+/// assert_eq!(&buffer[..len + 1], &expected);
+/// # }
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SlipEncoder<'a> {
+    buffer: &'a [u8],
+}
+
+impl<'a> SlipEncoder<'a> {
+    /// Create a new SLIP decoder by passing a slice with the encoded values to it.
+    pub fn new(buffer: &'a [u8]) -> Self {
+        Self { buffer }
+    }
+
+    /// Return an iterator returning the decoded values until the END byte is reached.
+    pub fn iter(&self) -> SlipEncoderIterator {
+        SlipEncoderIterator::from(self.buffer)
+    }
+}
+
+/// An iterator over a buffer that emits the decoded package.
+#[derive(Debug, Copy, Clone)]
+pub struct SlipEncoderIterator<'a> {
+    buffer: &'a [u8],
+    escaped: Option<u8>,
+    done: bool,
+}
+
+impl<'a> Iterator for SlipEncoderIterator<'a> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            None
+        } else if self.buffer.is_empty() {
+            self.done = true;
+            Some(slip_values::END)
+        } else {
+            match self.escaped {
+                Some(c) => {
+                    self.escaped = None;
+                    Some(c)
+                }
+                None => {
+                    let c = self.buffer[0];
+                    match c {
+                        slip_values::END => {
+                            self.buffer = &self.buffer[1..];
+                            self.escaped = Some(slip_values::ESC_END);
+                            Some(slip_values::ESC)
+                        }
+                        slip_values::ESC => {
+                            self.buffer = &self.buffer[1..];
+                            self.escaped = Some(slip_values::ESC_ESC);
+                            Some(slip_values::ESC)
+                        }
+                        _ => {
+                            self.buffer = &self.buffer[1..];
+                            Some(c)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl<'a> From<&'a [u8]> for SlipEncoderIterator<'a> {
+    fn from(val: &'a [u8]) -> Self {
+        SlipEncoderIterator {
+            buffer: val,
+            escaped: None,
+            done: false,
+        }
+    }
+}
+
 pub(crate) mod slip_values {
     pub const END: u8 = 0xc0;
     pub const ESC: u8 = 0xdb;
@@ -288,6 +401,22 @@ mod tests {
     use hexlit::hex;
 
     #[test]
+    fn encode_empty() {
+        let data = [];
+        let expected = [slip_values::END];
+        let slip = SlipEncoder::new(&data);
+        let mut buffer = [0u8; 128];
+
+        let mut len = 0;
+        for (i, (v, b)) in slip.iter().zip(buffer.iter_mut()).enumerate() {
+            *b = v;
+            len = i;
+        }
+
+        assert_eq!(&buffer[..len + 1], &expected);
+    }
+
+    #[test]
     fn decode_empty_iter() {
         let data = [];
         let slip = SlipDecoder::new(&data);
@@ -306,6 +435,22 @@ mod tests {
 
         assert_eq!(decoded, []);
         assert_eq!(rest, None);
+    }
+
+    #[test]
+    fn encode_one_packet() {
+        let data = hex!("00112233445566");
+        let expected = hex!("00112233445566C0");
+        let slip = SlipEncoder::new(&data);
+        let mut buffer = [0u8; 128];
+
+        let mut len = 0;
+        for (i, (v, b)) in slip.iter().zip(buffer.iter_mut()).enumerate() {
+            *b = v;
+            len = i;
+        }
+
+        assert_eq!(&buffer[..len + 1], &expected);
     }
 
     #[test]
@@ -329,6 +474,33 @@ mod tests {
         let (decoded, rest) = decode_in_place(&mut data[..]).unwrap();
         assert_eq!(decoded, hex!("00112233445566"));
         assert_eq!(rest, None);
+    }
+
+    #[test]
+    fn encode_two_packets() {
+        let data1 = hex!("012345");
+        let data2 = hex!("6789AB");
+        let expected = hex!("012345C06789ABC0");
+        let mut buffer = [0u8; 128];
+
+        let mut len = 0;
+        let slip = SlipEncoder::new(&data1);
+        for (i, (b, v)) in buffer.iter_mut().zip(slip.iter()).enumerate() {
+            *b = v;
+            len = i;
+        }
+        len += 1;
+
+        let mut len2 = 0;
+        let slip = SlipEncoder::new(&data2);
+        for (i, (b, v)) in buffer[len..].iter_mut().zip(slip.iter()).enumerate() {
+            *b = v;
+            len2 = i;
+        }
+        len2 += 1;
+        let total_len = len + len2;
+
+        assert_eq!(&buffer[..total_len], &expected);
     }
 
     #[test]
@@ -366,6 +538,22 @@ mod tests {
     }
 
     #[test]
+    fn encode_with_escaped_end() {
+        let data = hex!("00C0FF");
+        let expected = hex!("00DBDCFFC0");
+        let slip = SlipEncoder::new(&data);
+        let mut buffer = [0u8; 128];
+
+        let mut len = 0;
+        for (i, (v, b)) in slip.iter().zip(buffer.iter_mut()).enumerate() {
+            *b = v;
+            len = i;
+        }
+
+        assert_eq!(&buffer[..len + 1], &expected);
+    }
+
+    #[test]
     fn decode_with_escaped_end_iter() {
         let data = hex!("00DBDCFFC0");
         let result = hex!("00C0FF");
@@ -386,6 +574,23 @@ mod tests {
         let (decoded, rest) = decode_in_place(&mut data[..]).unwrap();
         assert_eq!(decoded, hex!("00C0FF"));
         assert_eq!(rest, None);
+    }
+
+    #[test]
+    fn encode_with_escaped_esc() {
+        let data = hex!("AADB55");
+        let expected = hex!("AADBDD55C0");
+
+        let slip = SlipEncoder::new(&data);
+        let mut buffer = [0u8; 128];
+
+        let mut len = 0;
+        for (i, (v, b)) in slip.iter().zip(buffer.iter_mut()).enumerate() {
+            *b = v;
+            len = i;
+        }
+
+        assert_eq!(&buffer[..len + 1], &expected);
     }
 
     #[test]
@@ -427,7 +632,10 @@ mod tests {
     #[test]
     fn decode_with_escape_error() {
         let mut data = hex!("00DBAA11C0");
-        assert_eq!(check_for_errors(&data), Err(SlipError::UnexpectedAfterEscaped));
+        assert_eq!(
+            check_for_errors(&data),
+            Err(SlipError::UnexpectedAfterEscaped)
+        );
 
         assert_eq!(
             decode_in_place(&mut data[..]),
