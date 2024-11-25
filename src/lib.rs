@@ -332,8 +332,13 @@ impl<'a> Iterator for SlipEncoderIterator<'a> {
         if self.done {
             None
         } else if self.buffer.is_empty() {
-            self.done = true;
-            Some(slip_values::END)
+            if let Some(c) = self.escaped {
+                self.escaped = None;
+                Some(c)
+            } else {
+                self.done = true;
+                Some(slip_values::END)
+            }
         } else {
             match self.escaped {
                 Some(c) => {
@@ -639,5 +644,37 @@ mod tests {
             decode_in_place(&mut data[..]),
             Err(SlipError::UnexpectedAfterEscaped)
         );
+    }
+
+    #[test]
+    fn encode_with_last_escaped_end() {
+        let data = hex!("00FFC0");
+        let expected = hex!("00FFDBDCC0");
+        let slip = SlipEncoder::new(&data);
+        let mut buffer = [0u8; 128];
+
+        let mut len = 0;
+        for (i, (v, b)) in slip.iter().zip(buffer.iter_mut()).enumerate() {
+            *b = v;
+            len = i;
+        }
+
+        assert_eq!(&buffer[..len + 1], &expected);
+    }
+    #[test]
+    fn encode_with_last_escaped_esc() {
+        let data = hex!("AA55DB");
+        let expected = hex!("AA55DBDDC0");
+
+        let slip = SlipEncoder::new(&data);
+        let mut buffer = [0u8; 128];
+
+        let mut len = 0;
+        for (i, (v, b)) in slip.iter().zip(buffer.iter_mut()).enumerate() {
+            *b = v;
+            len = i;
+        }
+
+        assert_eq!(&buffer[..len + 1], &expected);
     }
 }
